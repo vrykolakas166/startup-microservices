@@ -2,6 +2,7 @@ using Basket.API.Basket.DeleteBasket;
 using Basket.API.Basket.GetBasket;
 using Basket.API.Basket.StoreBasket;
 using BuildingBlocks.Exceptions.Handler;
+using Discount.Grpc;
 using HealthChecks.UI.Client;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,6 +16,8 @@ builder.Services.AddMediatR(config =>
     config.AddOpenBehavior(typeof(ValidationBehavior<,>));
     config.AddOpenBehavior(typeof(LoggingBehavior<,>));
 });
+
+// Data services
 builder.Services.AddCarter(configurator: config =>
 {
     config.WithModule<DeleteBasketEndpoint>();
@@ -27,14 +30,31 @@ builder.Services.AddMarten(config =>
     config.Schema.For<ShoppingCart>().Identity(x => x.Username);
 }).UseLightweightSessions();
 
-builder.Services.AddExceptionHandler<CustomExceptionHandler>();
+builder.Services.AddScoped<IBasketRepository, BasketRepository>();
+builder.Services.Decorate<IBasketRepository, CachedBasketRepository>();
+
 builder.Services.AddStackExchangeRedisCache(action =>
 {
     action.Configuration = builder.Configuration.GetConnectionString("Redis")!;
     //action.InstanceName = "BasketAPI_";
 });
-builder.Services.AddScoped<IBasketRepository, BasketRepository>();
-builder.Services.Decorate<IBasketRepository, CachedBasketRepository>();
+
+// Grpc services
+builder.Services.AddGrpcClient<DiscountProtoService.DiscountProtoServiceClient>(config =>
+{
+    config.Address = new Uri(builder.Configuration["GrpcConfigs:DiscountUrl"]!);
+})
+    .ConfigurePrimaryHttpMessageHandler(() =>
+{
+    var handler = new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+    };
+    return handler;
+});
+
+// Cross-cutting services
+builder.Services.AddExceptionHandler<CustomExceptionHandler>();
 
 builder.Services.AddHealthChecks()
     .AddNpgSql(builder.Configuration.GetConnectionString("Database")!)
